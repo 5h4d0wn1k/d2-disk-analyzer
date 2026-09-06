@@ -1,121 +1,70 @@
 # D2 — Disk Image Analyzer
 
-Reads MBR/GPT partitions, extracts file metadata, recovers deleted files, timeline analysis.
+Hand-parses MBR/GPT partition tables and FAT32 filesystems (BPB + FAT chain + directory entries), reports partitions/clusters/deleted-file hints, and greps raw/unallocated regions.
 
-## Overview
+## IMPORTANT: Read before use.
 
-This project implements a disk image forensics analyzer that:
-- Parses MBR and GPT partition tables
-- Detects filesystem types (NTFS, FAT32, ext2)
-- Extracts file metadata from partition structures
-- Scans for deleted file signatures across the image
-- Builds forensic timelines from timestamps
-- Calculates file hashes for integrity verification
+This tool is for **authorized educational and blue-team analysis only**. Analyze disk images only from systems you own or are explicitly permitted to examine. The bundled fixture is fully synthetic; no personal data.
 
 ## Features
 
-- **Partition parsing**: MBR and GPT partition table support
-- **Filesystem detection**: NTFS, FAT32, exFAT, ext2 recognition
-- **File extraction**: Directory entry parsing for metadata
-- **Deleted recovery**: Signature-based scanning for deleted files
-- **Timeline analysis**: Timestamp extraction and ordering
-- **Hash verification**: MD5, SHA1, SHA256 calculation
-- **Test mode**: Generate synthetic test disk images
+- **MBR partition table parsing** by hand (struct): status, type, LBA start, sector count, size
+- **GPT partition table parsing** by hand: type GUID, name, LBA range
+- **FAT32 BPB parsing**: bytes/sector, sectors/cluster, reserved sectors, #FATs, sectors/FAT, root cluster
+- **FAT chain walking**: resolve cluster chains from the primary FAT
+- **Directory entry parsing**: 8.3 names, sizes, first cluster, dates; **deleted-file hints** (`0xE5`)
+- **Active-file recovery**: reconstruct file body by concatenating FAT-chain clusters
+- **Raw/unallocated grep**: locate byte patterns anywhere in the image
+- **Hash calculation**: MD5 / SHA1 / SHA256
+- **JSON report output**
 
-## Installation
+## Documented Synthetic Fixture Format
+
+`tests/fixtures/disk.img` is a synthetic 8 MiB disk image:
+
+| Region | Content |
+|--------|---------|
+| LBA 0 | MBR, one active FAT32-LBA partition (type 0x0C) at LBA 2048 |
+| LBA 2048 | FAT32 BPB (reserved=32, FATs=2, FAT size=8, root cluster=2) + boot code |
+| after | FAT1 + FAT2, then root cluster (2), then data region |
+| root cluster | `README.TXT` (live, cluster 3), `DOCUME.TXT` (live), `HIDDEN.BIN` (deleted), `GONE.DAT` (deleted) |
+| cluster 3 | README.TXT body |
+| offset `0x1000` | `SALVAGEME_FORENSIC_MARKER` (recoverable/unallocated grep target) |
+
+Regenerate with `python3 tests/generate_fixtures.py`.
+
+## Quick Start
 
 ```bash
-# No external dependencies required
+# Analyze the bundled synthetic disk image
+python3 cli.py --demo
+
+# Analyze any disk image you own
+python3 cli.py --image /path/to/disk.img --output reports/report.json
+
+# Grep the raw image for a byte pattern
+python3 cli.py --image /path/to/disk.img --grep "PATTERN"
 ```
 
-## Usage
+## Testing
 
 ```bash
-# Full analysis
-python3 disk_analyzer.py --image disk.raw
-
-# Generate test image and analyze
-python3 disk_analyzer.py --generate-test test_disk.raw
-
-# Parse MBR only
-python3 disk_analyzer.py --image disk.raw --mbr
-
-# Parse GPT only
-python3 disk_analyzer.py --image disk.raw --gpt
-
-# Calculate hashes only
-python3 disk_analyzer.py --image disk.raw --hash
-
-# Export to JSON
-python3 disk_analyzer.py --image disk.raw --output report.json
+python3 -m unittest discover -s tests
 ```
 
-## Example Output
+## Live Lab Test Plan
 
-```
-============================================================
-  D2 — Disk Image Analyzer — Analysis Report
-============================================================
-  File: disk.raw
-  Size: 2,097,152 bytes
-  MD5:  b2c3d4e5f6a7...
+1. Run `python3 cli.py --demo` — should exit 0, print MBR + FAT32 files, mark 2 deleted files, recover README body
+2. Run `python3 -m unittest discover -s tests` — all tests pass
+3. Verify `reports/d2_report.json` contains partition table, BPB, root dir, raw grep hits
 
-  Partition Scheme: MBR
-    Partition 1: NTFS/exFAT/HPFS (1024.0 MB)
-    Partition 2: Linux filesystem (512.0 MB)
+## Metrics
 
-  Active Files: 3
-  Deleted Files Found: 2
-  Deleted File Signatures: 5
-
-  --- Deleted File Signatures ---
-    0x00010000: PNG image
-    0x00020000: JPEG image
-    0x00030000: PDF document
-
-  Timeline: 5 events
-    2024-01-15 10:00:00 file_created: DOCUMENT.TXT
-============================================================
-```
-
-## Legal Disclaimer
-
-**IMPORTANT: Read before use.**
-
-This project is provided for **educational and authorized security testing purposes only**. 
-
-### Authorization Requirements
-- You MUST have explicit written permission from the disk/system owner before using this tool
-- Unauthorized access to computer storage is illegal under federal and state laws
-- This tool should ONLY be used on disks/images you own or have written authorization to analyze
-
-### Legal Framework
-- **Computer Fraud and Abuse Act (CFAA)**: Unauthorized access to computer systems is a federal crime
-- **Federal Rules of Evidence**: Evidence obtained without authorization may be inadmissible
-- **State Laws**: Many states have additional computer crime statutes
-- **GDPR/CCPA**: Disk images may contain personal data subject to privacy regulations
-
-### Acceptable Use
-- Forensic analysis of your own systems during incident response
-- Authorized digital forensics investigations with proper legal authority
-- Academic research in controlled lab environments
-- Security education and training with synthetic test data
-
-### Prohibited Use
-- Analyzing disk images from systems without authorization
-- Recovering personal data without legal authority
-- Any activity that violates applicable laws or regulations
-- Commercial use without proper licensing
-
-### No Warranty
-This software is provided "AS IS" without warranty of any kind. The author is not responsible for any misuse or damage caused by this software.
-
-### Responsible Disclosure
-If you discover vulnerabilities using this tool, follow responsible disclosure practices:
-1. Report to the vendor/owner privately
-2. Allow reasonable time for remediation
-3. Do not exploit beyond proof of concept
+- Formats parsed: MBR, GPT (struct), FAT32 BPB, FAT chain, directory entries
+- Deleted-file detection: `0xE5` marker
+- Test count: 19
+- Demo exit code: 0
 
 ## License
 
-MIT
+MIT License — see [LICENSE](LICENSE).
